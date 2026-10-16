@@ -51,8 +51,6 @@ module aes_top(
             cycle_count <= 0;
         end else begin
 
-            done <= 0;  // Only change added
-
             // START
             if (start && !busy) begin
                 state <= plaintext ^ key;
@@ -60,7 +58,7 @@ module aes_top(
                 busy  <= 1;
                 done  <= 0;
                 cycle_count <= 0;
-            end
+            end 
 
             // MAIN ROUNDS
             else if (busy) begin
@@ -70,7 +68,7 @@ module aes_top(
                 if (round < 10) begin
                     state <= add;
                     round <= round + 1;
-                end
+                end 
                 else if (round == 10) begin
                     // FINAL ROUND (NO mixcolumns)
                     ciphertext <= shift ^ get_round_key(10);
