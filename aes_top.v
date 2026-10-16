@@ -1,110 +1,83 @@
 module aes_top(
-input clk,
-input rst,
-input start,
-input [127:0] plaintext,
-input [127:0] key,
-output reg [127:0] ciphertext,
-output reg done
+    input         clk,
+    input         rst,
+    input         start,
+    input [127:0] plaintext,
+    input [127:0] key,
+    output reg [127:0] ciphertext,
+    output reg    done,
+    output reg [31:0] cycle_count
 );
 
-reg [127:0] state;
-reg [127:0] round_key;
-reg [3:0] round;
+    reg [127:0] state;
+    reg [3:0]   round;
+    reg         busy;
 
-// Internal wires
-wire [127:0] sub_out;
-wire [127:0] shift_out;
-wire [127:0] mix_out;
-wire [127:0] add_out;
-wire [127:0] next_key;
-wire [127:0] final_add;
+    wire [1407:0] expanded_keys;
+    wire [127:0]  round_key;
 
-// ===== YOUR MODULES =====
+    wire [127:0] sub, shift, mix, add;
 
-// SubBytes
-subbytes SB (
-    .state(state),
-    .out(sub_out)
-);
+    keyexpansion KE (.key(key), .w_expanded(expanded_keys));
 
-// ShiftRows
-shiftrows SR (
-    .state(sub_out),
-    .out(shift_out)
-);
+    function [127:0] get_round_key;
+        input [3:0] r;
+        integer base;
+        reg [31:0] w0, w1, w2, w3;
+        begin
+            base = 4 * r;
+            w0 = expanded_keys[32*base +: 32];
+            w1 = expanded_keys[32*(base+1) +: 32];
+            w2 = expanded_keys[32*(base+2) +: 32];
+            w3 = expanded_keys[32*(base+3) +: 32];
+            get_round_key = {w0, w1, w2, w3};
+        end
+    endfunction
 
-// MixColumns (NOTE: using wrapper)
-mixcolumns_wrapper MC (
-    .data(shift_out),
-    .out(mix_out)
-);
+    assign round_key = get_round_key(round);
 
-// AddRoundKey
-addroundkey ARK (
-    .state(mix_out),
-    .key(round_key),
-    .out(add_out)
-);
-addroundkey FINAL_ARK (
-    .state(shift_out),   // ✅ NO MixColumns
-    .key(next_key),
-    .out(final_add)
-);
+    subbytes    SB (.state(state), .out(sub));
+    shiftrows   SR (.state(sub),   .out(shift));
+    mix_columns MC (.in(shift),    .out(mix));
+    addroundkey ARK (.state(mix),  .key(round_key), .out(add));
 
-// Key Expansion
-keyexpansion KE (
-    .key(round_key),
-    .round(round),
-    .round_key(next_key)
-);
+    always @(posedge clk) begin
+        if (rst) begin
+            state       <= 0;
+            round       <= 0;
+            busy        <= 0;
+            done        <= 0;
+            ciphertext  <= 0;
+            cycle_count <= 0;
+        end else begin
 
-// ===== CONTROL LOGIC =====
+            // START
+            if (start && !busy) begin
+                state <= plaintext ^ key;
+                round <= 1;
+                busy  <= 1;
+                done  <= 0;
+                cycle_count <= 0;
+            end 
 
-always @(posedge clk or posedge rst)
-begin
-    if (rst)
-    begin
-        state <= 0;
-        round_key <= 0;
-        round <= 0;
-        done <= 0;
-        ciphertext <= 0;
+            // MAIN ROUNDS
+            else if (busy) begin
+
+                cycle_count <= cycle_count + 1;
+
+                if (round < 10) begin
+                    state <= add;
+                    round <= round + 1;
+                end 
+                else if (round == 10) begin
+                    // FINAL ROUND (NO mixcolumns)
+                    ciphertext <= shift ^ get_round_key(10);
+                    done       <= 1;
+                    busy       <= 0;
+                    round      <= 0;
+                end
+            end
+        end
     end
-
-    else if (start)
-    begin
-        case (round)
-
-        // 🔹 Round 0: Initial AddRoundKey
-        0:
-        begin
-            state <= plaintext ^ key;
-            round_key <= key;
-            round <= 1;
-            done <= 0;
-        end
-
-        // 🔹 Rounds 1–9
-        1,2,3,4,5,6,7,8,9:
-        begin
-            state <= add_out;
-            round_key <= next_key;
-            round <= round + 1;
-        end
-
-        // 🔹 Final Round (NO MixColumns)
-        10:
-        begin
-            // SubBytes → ShiftRows → AddRoundKey
-            state <= final_add;
-            ciphertext <= final_add;
-            done <= 1;
-            round <= 0;
-        end
-
-        endcase
-    end
-end
 
 endmodule
